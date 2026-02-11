@@ -15,8 +15,13 @@ class GroceryList extends StatefulWidget {
 
 class _GroceryListState extends State<GroceryList> {
   List<GroceryItem> _groceryItems = [];
-  var _isLoading = true;
-  String _error = "";
+  late Future<List<GroceryItem>> _loadedItems;
+
+  @override
+  initState() {
+    _loadedItems = _loadItems();
+    super.initState();
+  }
 
   void _removeItem(GroceryItem item, int index) async {
     final uri = Uri.https(
@@ -33,57 +38,39 @@ class _GroceryListState extends State<GroceryList> {
     }
   }
 
-  void _loadItems() async {
+  Future<List<GroceryItem>> _loadItems() async {
     final uri = Uri.https(
       'flutter-shopping-list-ap-66bb2-default-rtdb.asia-southeast1.firebasedatabase.app',
       'shopping-list.json',
     );
 
-    try {
-      final response = await http.get(uri);
-      if (response.statusCode >= 400) {
-        setState(() {
-          _error = 'Failed to retreive items. Try again later.';
-        });
-      }
-
-      if (response.body == 'null') {
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-
-      final Map<String, dynamic> listData = json.decode(response.body);
-
-      final List<GroceryItem> loadedItems = [];
-
-      for (final item in listData.entries) {
-        final category = categories.entries
-            .firstWhere((cat) => cat.value.name == item.value['category'])
-            .value;
-        loadedItems.add(
-          GroceryItem(
-            id: item.key,
-            name: item.value['name'],
-            quantity: item.value['quantity'],
-            category: category,
-          ),
-        );
-      }
-      setState(() {
-        _groceryItems = loadedItems;
-        _isLoading = false;
-      });
-    } catch (err) {
-      _error = "Something went wrong! Please try again later.";
+    final response = await http.get(uri);
+    if (response.statusCode >= 400) {
+      throw Exception('Failed to retreive Grocery Items');
     }
-  }
 
-  @override
-  void initState() {
-    _loadItems();
-    super.initState();
+    if (response.body == 'null') {
+      return [];
+    }
+
+    final Map<String, dynamic> listData = json.decode(response.body);
+
+    final List<GroceryItem> loadedItems = [];
+
+    for (final item in listData.entries) {
+      final category = categories.entries
+          .firstWhere((cat) => cat.value.name == item.value['category'])
+          .value;
+      loadedItems.add(
+        GroceryItem(
+          id: item.key,
+          name: item.value['name'],
+          quantity: item.value['quantity'],
+          category: category,
+        ),
+      );
+    }
+    return loadedItems;
   }
 
   @override
@@ -110,39 +97,47 @@ class _GroceryListState extends State<GroceryList> {
           ),
         ],
       ),
-      body: _error.isNotEmpty
-          ? Center(child: Text(_error))
-          : _groceryItems.isNotEmpty
-          ? ListView.builder(
-              itemBuilder: (ctx, index) => Dismissible(
-                key: ValueKey(_groceryItems[index].id),
-                child: ListTile(
-                  leading: Icon(
-                    Icons.square,
-                    color: _groceryItems[index].category.color,
-                  ),
-                  title: Text(_groceryItems[index].name),
-                  trailing: Text(_groceryItems[index].quantity.toString()),
+      body: FutureBuilder(
+        future: _loadedItems,
+        builder: (ctx, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          } else if (snapshot.hasError) {
+            return Center(child: Text(snapshot.error.toString()));
+          } else if (snapshot.hasData) {
+            if (snapshot.data!.isEmpty) {
+              return Center(
+                child: Text(
+                  'Add grocery items to see this view',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyLarge!.copyWith(fontWeight: FontWeight.bold),
                 ),
-                onDismissed: (direction) {
-                  _removeItem(_groceryItems[index], index);
-                  setState(() {
-                    _groceryItems.remove(_groceryItems[index]);
-                  });
-                },
+              );
+            }
+          }
+          return ListView.builder(
+            itemBuilder: (ctx, index) => Dismissible(
+              key: ValueKey(snapshot.data![index].id),
+              child: ListTile(
+                leading: Icon(
+                  Icons.square,
+                  color: snapshot.data![index].category.color,
+                ),
+                title: Text(snapshot.data![index].name),
+                trailing: Text(snapshot.data![index].quantity.toString()),
               ),
-              itemCount: _groceryItems.length,
-            )
-          : _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : Center(
-              child: Text(
-                'Add grocery items to see this view',
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyLarge!.copyWith(fontWeight: FontWeight.bold),
-              ),
+              onDismissed: (direction) {
+                _removeItem(snapshot.data![index], index);
+                setState(() {
+                  snapshot.data!.remove(snapshot.data![index]);
+                });
+              },
             ),
+            itemCount: snapshot.data!.length,
+          );
+        },
+      ),
     );
   }
 }
